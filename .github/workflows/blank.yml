@@ -20,7 +20,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Clone Mu-Silicium (with submodules)
@@ -34,7 +34,6 @@ jobs:
           ls -la
           chmod +x setup_env.sh build_uefi.* 2>/dev/null || true
           ./setup_env.sh -p apt
-          if [ -f pip-requirements.txt ]; then pip install -r pip-requirements.txt; fi
 
       - name: Locate gtaxllte device files
         working-directory: Mu-Silicium
