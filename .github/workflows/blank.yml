@@ -31,8 +31,10 @@ jobs:
       - name: Install build environment
         working-directory: Mu-Silicium
         run: |
-          chmod +x setup_env.sh build_uefi.sh
+          ls -la
+          chmod +x setup_env.sh build_uefi.* 2>/dev/null || true
           ./setup_env.sh -p apt
+          if [ -f pip-requirements.txt ]; then pip install -r pip-requirements.txt; fi
 
       - name: Locate gtaxllte device files
         working-directory: Mu-Silicium
@@ -101,7 +103,12 @@ jobs:
         working-directory: Mu-Silicium
         run: |
           touch ../build-start.marker
-          ./build_uefi.sh -d gtaxllte -r ${{ inputs.build_mode }}
+          # Newer Mu-Silicium uses build_uefi.py, older uses build_uefi.sh
+          if [ -f build_uefi.py ]; then
+            python3 build_uefi.py -d gtaxllte -r ${{ inputs.build_mode }}
+          else
+            ./build_uefi.sh -d gtaxllte -r ${{ inputs.build_mode }}
+          fi
 
       - name: Collect output
         run: |
