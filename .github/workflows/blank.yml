@@ -98,6 +98,49 @@ jobs:
           echo "--- every resolution-looking line in the device folder (review these!) ---"
           grep -rniE 'Horizontal|Vertical|Resolution|Stride|FrameBuffer|FbAddr|Width|Height' $(find . -ipath '*gtaxllte*' -type f -not -path './.git/*') || true
 
+      - name: Diagnostics (which drivers does gtaxllte include?)
+        if: always()
+        working-directory: Mu-Silicium
+        run: |
+          D=../diag
+          mkdir -p $D
+          {
+            echo "=== Mu-Silicium commit ==="; git rev-parse HEAD
+            echo; echo "=== Repo root ==="; ls -la
+            echo; echo "=== Status.md lines mentioning 7870 / gtaxllte / Exynos ==="
+            grep -niE '7870|gtaxllte|exynos' Status.md 2>/dev/null || echo "(none found)"
+            echo; echo "=== Files for gtaxllte ==="
+            find . -ipath '*gtaxllte*' -not -path './.git/*'
+            echo; echo "=== Platform folder(s) holding gtaxllte ==="
+            find . -ipath '*gtaxllte*' -not -path './.git/*' -printf '%h\n' | sort -u
+          } > $D/overview.txt
+
+          # full contents of every gtaxllte file
+          for f in $(find . -ipath '*gtaxllte*' -type f -not -path './.git/*'); do
+            echo "##### $f" >> $D/gtaxllte-files.txt
+            cat "$f" >> $D/gtaxllte-files.txt
+            echo >> $D/gtaxllte-files.txt
+          done
+
+          # driver check: USB / storage / watchdog / memory in device + SoC platform
+          PLAT=$(find . -ipath '*gtaxllte*' -type f -not -path './.git/*' | head -1 | cut -d/ -f2-3)
+          {
+            echo "=== Searching ./$PLAT and Silicon/Samsung for driver keywords ==="
+            grep -rniE 'usb|dwc|xhci|ehci|mmc|dwmmc|sdhci|ufs|watchdog|wdt|memorymap|framebuffer|simplefb|stride' \
+              ./$PLAT ./Silicon/Samsung 2>/dev/null | head -500
+          } > $D/drivers.txt || true
+
+          wc -l $D/*.txt
+          echo "---- overview ----"; cat $D/overview.txt
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics
+          path: diag/*
+          if-no-files-found: warn
+
       - name: Compile
         working-directory: Mu-Silicium
         run: |
