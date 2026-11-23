@@ -38,7 +38,7 @@ The DWC3 node uses IRQ 230 and references USB2 and USB3 PHY indices. The board l
 
 Mu-Silicium contains `SamsungPkg/Drivers/UsbfnDwc3Dxe`. This implements the USB Function protocol for device/gadget mode. It is not a USB Host Controller driver.
 
-The current Mu-Silicium source tree does not contain an obvious DWC3/xHCI host DXE driver. Adding the function driver to this platform would not enable USB keyboards, mice, or flash drives.
+The current Mu-Silicium source tree does not contain an obvious DWC3/xHCI host DXE driver. The pinned Mu_Basecore submodule does contain the generic EDK2 XhciDxe, UsbBusDxe, UsbKbDxe, and UsbMassStorageDxe modules. Mu_Plus contains UsbMouseHidDxe. However, XhciDxe lives under Bus/Pci and uses PCI services. The J7 Neo DWC3 is an SoC MMIO controller, not a PCI device, so it needs a platform adaptation or a dedicated host-controller DXE that publishes EFI_USB2_HC_PROTOCOL. The generic USB bus and class drivers can then sit above that protocol.
 
 ## Required implementation
 
@@ -55,7 +55,7 @@ The current Mu-Silicium source tree does not contain an obvious DWC3/xHCI host D
 - [x] Read the exact J7velte board USB node.
 - [x] Verify DWC3 base, PHY base, IRQ, clock names, and high-speed OTG configuration.
 - [x] Confirm the existing Mu-Silicium DWC3 driver is device mode, not host mode.
-- [ ] Locate or add a UEFI xHCI host-controller driver compatible with DWC3.
+- [x] Locate the generic EDK2 USB stack in Mu_Basecore: XhciDxe, UsbBusDxe, UsbKbDxe, UsbMassStorageDxe. Mu_Plus also contains USB mouse HID support.\n- [ ] Adapt or implement a platform xHCI host-controller driver for the DWC3 MMIO controller. The generic XhciDxe is under Bus/Pci and expects PCI services, so it cannot be assumed to bind directly to this non-PCI SoC controller.
 - [ ] Implement Exynos 7870 PHY/clock/PMU initialization.
 - [ ] Integrate USB bus, HID, and mass-storage drivers.
 - [ ] Build and test on the physical J7 Neo.
