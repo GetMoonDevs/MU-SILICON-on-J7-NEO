@@ -1,42 +1,69 @@
 # Galaxy J7 Neo (SM-J701F) USB Host Porting
 
-## Confirmed platform
+## Confirmed target hardware
 
-- Target: Samsung Galaxy J7 Neo, SM-J701F.
-- SoC: Samsung Exynos 7870 (S5E7870).
-- The upstream Exynos 7870 device-tree description places the USB DRD glue/controller at `0x13600000` with a `0x10000` register window.
-- The USB2 DRD PHY is described at `0x135c0000`.
-- The upstream device tree associates the controller with three FSYS clocks named `bus_early`, `ref`, and `ctrl`, and a PHY clock/reference pair.
-- The current Mu-Silicium `UsbfnDwc3Dxe` module implements the USB Function (device/gadget) protocol. It is not a USB Host Controller driver.
+Target: Samsung Galaxy J7 Neo, model SM-J701F, codename j7velte, Exynos 7870.
 
-## Important distinction
+The exact J7 Neo Linux device tree is available in:
+`Exynos7870/android_kernel_samsung_universal7870`, branch `lineage-16.0`.
 
-Adding `UsbfnDwc3Dxe.inf` to the J7 Neo platform will not make a USB keyboard, mouse, or flash drive work as a host. That driver handles the phone acting as a USB device.
+Relevant files:
+- `arch/arm64/boot/dts/exynos7870-j7velte_common.dtsi`
+- `arch/arm64/boot/dts/exynos7870.dtsi`
 
-USB Host support needs two separate layers:
+## Verified USB hardware configuration
 
-1. A platform bring-up driver that enables the Exynos 7870 FSYS clocks, initializes/releases the USB PHY, resets the DWC3 core, and selects host mode.
-2. A host-controller driver that exposes the DWC3 host-side xHCI register interface through UEFI's USB Host Controller protocol. The standard USB bus, HID, and mass-storage drivers can then enumerate peripherals.
+The J7velte board file enables the USB controller and configures its DWC3 child as follows:
 
-## Register and platform references
+- Controller node: `usb@13600000`
+- Controller register base: `0x13600000`
+- Register window: `0x10000`
+- DWC3 core compatible: `synopsys,dwc3`
+- USB maximum speed: `high-speed` (USB 2.0)
+- Linux role mode: `otg`
+- Board property: `is_not_vbus_pad`
 
-- DWC3 glue/controller base: `0x13600000`.
-- USB DRD PHY base: `0x135c0000`.
-- Linux upstream compatible: `samsung,exynos7870-dwusb3`.
-- DWC3 core compatible: `snps,dwc3`.
-- The DWC3 global control register's port-capability field must select host mode. This must happen only after the PHY and required clocks are ready.
+The Exynos 7870 SoC device tree defines the DRD PHY:
 
-## Current implementation status
+- PHY base: `0x135c0000`
+- PHY register window: `0x100`
+- PHY compatible: `samsung,exynos7870-usbdrd-phy`
+- Clocks: `usbdrd20`, `phyumux`, `usb_pll`
+- Clock IDs in this kernel tree: 335, 336, 350
+- PMU syscon: `pmu_system_controller`
 
-- [x] Confirm target model and Exynos 7870 family.
-- [x] Identify the upstream DWC3 and PHY register windows.
-- [x] Confirm the existing Mu-Silicium DWC3 function driver is not a host driver.
-- [ ] Confirm the SM-J701F board-specific PHY, clock, and VBUS/OTG sequencing from its exact kernel device tree or vendor sources.
-- [ ] Implement and validate the Exynos 7870 DWC3 host bring-up DXE.
-- [ ] Integrate a compatible xHCI host-controller driver.
-- [ ] Add UEFI USB bus, keyboard/mouse HID, and mass-storage drivers.
-- [ ] Validate enumeration with a powered OTG hub, USB keyboard/mouse, and flash drive.
+The DWC3 node uses IRQ 230 and references USB2 and USB3 PHY indices. The board limits the controller to high-speed USB, so the first target is USB 2.0 OTG host mode.
 
-## Safety
+## Existing Mu-Silicium limitation
 
-Do not flash an experimental host driver over the only working UEFI image. Keep the known-working build and test the new image from a separate artifact first.
+Mu-Silicium contains `SamsungPkg/Drivers/UsbfnDwc3Dxe`. This implements the USB Function protocol for device/gadget mode. It is not a USB Host Controller driver.
+
+The current Mu-Silicium source tree does not contain an obvious DWC3/xHCI host DXE driver. Adding the function driver to this platform would not enable USB keyboards, mice, or flash drives.
+
+## Required implementation
+
+1. Implement Exynos 7870 USB PHY and clock bring-up using the verified J7 Neo register map and board properties.
+2. Reset and initialize the DWC3 core, then select host port capability.
+3. Expose the DWC3 host-side xHCI register interface through UEFI's USB Host Controller protocol.
+4. Connect the UEFI USB bus driver, HID keyboard/mouse drivers, and USB mass-storage driver.
+5. Verify VBUS/OTG power behavior. The board's `is_not_vbus_pad` property means VBUS handling must not be guessed from a generic Exynos board.
+6. Test with a powered OTG hub, keyboard, mouse, and USB flash drive.
+
+## Status
+
+- [x] Confirm SM-J701F / j7velte / Exynos 7870.
+- [x] Read the exact J7velte board USB node.
+- [x] Verify DWC3 base, PHY base, IRQ, clock names, and high-speed OTG configuration.
+- [x] Confirm the existing Mu-Silicium DWC3 driver is device mode, not host mode.
+- [ ] Locate or add a UEFI xHCI host-controller driver compatible with DWC3.
+- [ ] Implement Exynos 7870 PHY/clock/PMU initialization.
+- [ ] Integrate USB bus, HID, and mass-storage drivers.
+- [ ] Build and test on the physical J7 Neo.
+
+## References
+
+- J7 Neo board DTS: https://github.com/Exynos7870/android_kernel_samsung_universal7870/blob/lineage-16.0/arch/arm64/boot/dts/exynos7870-j7velte_common.dtsi
+- Exynos 7870 SoC DTS: https://github.com/Exynos7870/android_kernel_samsung_universal7870/blob/lineage-16.0/arch/arm64/boot/dts/exynos7870.dtsi
+- Mu-Silicium USB Function driver: https://github.com/Project-Silicium/Mu-Silicium/tree/main/Silicon/Samsung/SamsungPkg/Drivers/UsbfnDwc3Dxe
+
+Do not flash an experimental image over the only working UEFI build. Keep the known-working image and test the new build as a separate artifact.
