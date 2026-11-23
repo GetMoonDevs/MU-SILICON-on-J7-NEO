@@ -1,169 +1,113 @@
-name: Build Mu-Silicium UEFI for Galaxy J7 Neo (from gtaxllte)
-
-# Put this file in your repo at .github/workflows/build-j7neo-uefi.yml
-# Then: Actions tab -> "Build Mu-Silicium UEFI for Galaxy J7 Neo" -> Run workflow
+name: Build UEFI for Samsung Galaxy J7 Neo (SM-J701F)
 
 on:
   workflow_dispatch:
     inputs:
-      width:
-        description: "Screen width (J7 Neo = 720)"
-        default: "720"
-      height:
-        description: "Screen height (J7 Neo = 1280)"
-        default: "1280"
       build_mode:
-        description: "Build mode"
-        default: "RELEASE"
+        description: "UEFI build mode"
+        required: true
         type: choice
-        options: [RELEASE, DEBUG]
+        default: RELEASE
+        options:
+          - RELEASE
+          - DEBUG
 
 jobs:
   build:
+    name: Build J7 Neo UEFI, 720x1280
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
-      - name: Clone Mu-Silicium (with submodules)
+      - name: Clone Mu-Silicium and submodules
         run: |
-          git clone https://github.com/Project-Silicium/Mu-Silicium.git --recursive
+          git clone --recursive https://github.com/Project-Silicium/Mu-Silicium.git
           echo "Mu-Silicium commit: $(git -C Mu-Silicium rev-parse HEAD)"
 
       - name: Install build environment
         working-directory: Mu-Silicium
         run: |
-          ls -la
           chmod +x setup_env.sh build_uefi.* 2>/dev/null || true
           ./setup_env.sh -p apt
 
-      - name: Locate gtaxllte device files
+      - name: Configure J7 Neo identity and native display resolution
         working-directory: Mu-Silicium
         run: |
-          echo "--- files/folders named gtaxllte ---"
-          find . -ipath '*gtaxllte*' -not -path './.git/*' | head -50
-          if [ -z "$(find . -ipath '*gtaxllte*' -not -path './.git/*' | head -1)" ]; then
-            echo "::error::gtaxllte not found in this Mu-Silicium version. Check the Platforms/ folder for the correct codename."
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          candidates = list(Path("Platforms").rglob("gtaxllte.dsc"))
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected exactly one gtaxllte.dsc, found {len(candidates)}")
+          path = candidates[0]
+          text = path.read_text(encoding="utf-8")
+
+          replacements = {
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemModel\\|)".*?"$':
+                  r'\\1"Galaxy J7 Neo (SM-J701F)"',
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemRetailModel\\|)".*?"$':
+                  r'\\1"j7velte"',
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemRetailSku\\|)".*?"$':
+                  r'\\1"SM-J701F_j7velte"',
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemBoardModel\\|)".*?"$':
+                  r'\\1"SM-J701F"',
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdFrameBufferWidth\\|)\\d+\\s*$':
+                  r'\\g<1>720',
+              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdFrameBufferHeight\\|)\\d+\\s*$':
+                  r'\\g<1>1280',
+          }
+
+          for pattern, replacement in replacements.items():
+              text, count = re.subn(pattern, replacement, text)
+              if count != 1:
+                  raise SystemExit(f"Patch failed: expected one match, got {count}: {pattern}")
+
+          if "PcdFrameBufferWidth|720" not in text or "PcdFrameBufferHeight|1280" not in text:
+              raise SystemExit("J7 Neo framebuffer resolution verification failed")
+
+          path.write_text(text, encoding="utf-8")
+          print(f"Patched {path}")
+          print("SMBIOS identity: Samsung Galaxy J7 Neo, SM-J701F, j7velte")
+          print("UEFI framebuffer: 720x1280, 32-bit")
+          PY
+
+          echo "=== Applied J7 Neo display settings ==="
+          grep -nE 'PcdSmbiosSystem(Model|RetailModel|RetailSku|BoardModel)|PcdFrameBuffer(Width|Height|ColorDepth)' $(find Platforms -name gtaxllte.dsc -print)
+
+      - name: Build firmware
+        working-directory: Mu-Silicium
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+        run: |
+          if [ -f build_uefi.py ]; then
+            python3 build_uefi.py -d gtaxllte -r "$BUILD_MODE"
+          elif [ -f build_uefi.sh ]; then
+            chmod +x build_uefi.sh
+            ./build_uefi.sh -d gtaxllte -r "$BUILD_MODE"
+          else
+            echo "::error::No supported Mu-Silicium build script found"
             exit 1
           fi
 
-      - name: Patch resolution to J7 Neo
-        working-directory: Mu-Silicium
-        env:
-          W: ${{ inputs.width }}
-          H: ${{ inputs.height }}
-        run: |
-          python3 -I - <<'PY'
-          import os, re, sys
-
-          W, H = os.environ["W"], os.environ["H"]
-          # Any PCD / macro that carries the panel size
-          horiz = re.compile(r'(?i)^(\s*\S*(?:Horizontal|Width)\S*\s*\|\s*)(0x[0-9a-f]+|\d+)(.*)$')
-          vert  = re.compile(r'(?i)^(\s*\S*(?:Vertical|Height)\S*\s*\|\s*)(0x[0-9a-f]+|\d+)(.*)$')
-
-          # Device files = every file under a path containing "gtaxllte"
-          targets = []
-          for root, dirs, files in os.walk("."):
-              if ".git" in root.split(os.sep):
-                  continue
-              for f in files:
-                  p = os.path.join(root, f)
-                  if "gtaxllte" in p.lower() and f.lower().endswith((".dsc", ".inc", ".conf", ".dsc.inc", ".fdf", ".h", ".c")):
-                      targets.append(p)
-
-          changed = 0
-          for p in targets:
-              try:
-                  lines = open(p, encoding="utf-8", errors="replace").read().split("\n")
-              except Exception:
-                  continue
-              out = []
-              for ln in lines:
-                  m = horiz.match(ln)
-                  n = vert.match(ln)
-                  if m and "Pcd" in ln:
-                      new = f"{m.group(1)}{W}{m.group(3)}"
-                      print(f"{p}: {ln.strip()}  ->  {new.strip()}")
-                      ln = new; changed += 1
-                  elif n and "Pcd" in ln:
-                      new = f"{n.group(1)}{H}{n.group(3)}"
-                      print(f"{p}: {ln.strip()}  ->  {new.strip()}")
-                      ln = new; changed += 1
-                  out.append(ln)
-              open(p, "w", encoding="utf-8").write("\n".join(out))
-
-          print(f"\n{changed} resolution lines changed in {len(targets)} files")
-          if changed == 0:
-              print("::warning::No resolution PCDs found in gtaxllte files. Check the log above and patch manually.")
-          PY
-
-          echo "--- every resolution-looking line in the device folder (review these!) ---"
-          grep -rniE 'Horizontal|Vertical|Resolution|Stride|FrameBuffer|FbAddr|Width|Height' $(find . -ipath '*gtaxllte*' -type f -not -path './.git/*') || true
-
-      - name: Diagnostics (which drivers does gtaxllte include?)
-        if: always()
-        working-directory: Mu-Silicium
-        run: |
-          D=../diag
-          mkdir -p $D
-          {
-            echo "=== Mu-Silicium commit ==="; git rev-parse HEAD
-            echo; echo "=== Repo root ==="; ls -la
-            echo; echo "=== Status.md lines mentioning 7870 / gtaxllte / Exynos ==="
-            grep -niE '7870|gtaxllte|exynos' Status.md 2>/dev/null || echo "(none found)"
-            echo; echo "=== Files for gtaxllte ==="
-            find . -ipath '*gtaxllte*' -not -path './.git/*'
-            echo; echo "=== Platform folder(s) holding gtaxllte ==="
-            find . -ipath '*gtaxllte*' -not -path './.git/*' -printf '%h\n' | sort -u
-          } > $D/overview.txt
-
-          # full contents of every gtaxllte file
-          for f in $(find . -ipath '*gtaxllte*' -type f -not -path './.git/*'); do
-            echo "##### $f" >> $D/gtaxllte-files.txt
-            cat "$f" >> $D/gtaxllte-files.txt
-            echo >> $D/gtaxllte-files.txt
-          done
-
-          # driver check: USB / storage / watchdog / memory in device + SoC platform
-          PLAT=$(find . -ipath '*gtaxllte*' -type f -not -path './.git/*' | head -1 | cut -d/ -f2-3)
-          {
-            echo "=== Searching ./$PLAT and Silicon/Samsung for driver keywords ==="
-            grep -rniE 'usb|dwc|xhci|ehci|mmc|dwmmc|sdhci|ufs|watchdog|wdt|memorymap|framebuffer|simplefb|stride' \
-              ./$PLAT ./Silicon/Samsung 2>/dev/null | head -500
-          } > $D/drivers.txt || true
-
-          wc -l $D/*.txt
-          echo "---- overview ----"; cat $D/overview.txt
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics
-          path: diag/*
-          if-no-files-found: warn
-
-      - name: Compile
-        working-directory: Mu-Silicium
-        run: |
-          touch ../build-start.marker
-          # Newer Mu-Silicium uses build_uefi.py, older uses build_uefi.sh
-          if [ -f build_uefi.py ]; then
-            python3 build_uefi.py -d gtaxllte -r ${{ inputs.build_mode }}
-          else
-            ./build_uefi.sh -d gtaxllte -r ${{ inputs.build_mode }}
-          fi
-
-      - name: Collect output
+      - name: Collect firmware and build information
         run: |
           mkdir -p out
-          find Mu-Silicium -type f \( -name '*.img' -o -name '*.tar' -o -name '*.bin' \) \
-            -newer build-start.marker -not -path '*/.git/*' -print -exec cp {} out/ \;
-          cd out
-          for f in *; do mv "$f" "j7neo-${f}"; done
-          ls -la
+          find Mu-Silicium -type f \\( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \\) -not -path '*/.git/*' -print -exec cp --parents {} out/ \;
+          cat > out/J7NEO-BUILD-INFO.txt <<'EOF'
+          Target device: Samsung Galaxy J7 Neo
+          Model: SM-J701F
+          Device codename: j7velte
+          SoC: Samsung Exynos 7870
+          Native panel/framebuffer resolution: 720x1280
+          Framebuffer color depth: 32-bit
+          Build base: Project-Silicium Mu-Silicium gtaxllte platform package
+          Important: this is a J7 Neo display/identity-configured experimental build. The upstream gtaxllte platform package is still the hardware bring-up base. USB host, touchscreen, panel initialization, and OTG power are not confirmed by this workflow.
+          EOF
+          find out -type f -maxdepth 8 -print
+          test -n "$(find out -type f \\( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \\) -print -quit)"
 
-      - name: Upload UEFI image
+      - name: Upload J7 Neo UEFI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mu-silicium-j7neo-${{ inputs.build_mode }}
-          path: out/*
+          name: J7NEO-SM-J701F-720x1280-${{ inputs.build_mode }}
+          path: out/
           if-no-files-found: error
