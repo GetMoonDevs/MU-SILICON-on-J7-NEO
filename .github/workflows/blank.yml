@@ -42,18 +42,18 @@ jobs:
           text = path.read_text(encoding="utf-8")
 
           replacements = {
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemModel\\|)".*?"$':
-                  r'\\1"Galaxy J7 Neo (SM-J701F)"',
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemRetailModel\\|)".*?"$':
-                  r'\\1"j7velte"',
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemRetailSku\\|)".*?"$':
-                  r'\\1"SM-J701F_j7velte"',
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdSmbiosSystemBoardModel\\|)".*?"$':
-                  r'\\1"SM-J701F"',
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdFrameBufferWidth\\|)\\d+\\s*$':
-                  r'\\g<1>720',
-              r'(?m)^(\\s*gSiliciumPkgTokenSpaceGuid\\.PcdFrameBufferHeight\\|)\\d+\\s*$':
-                  r'\\g<1>1280',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdSmbiosSystemModel\|)".*?"$':
+                  r'\1"Galaxy J7 Neo (SM-J701F)"',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdSmbiosSystemRetailModel\|)".*?"$':
+                  r'\1"j7velte"',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdSmbiosSystemRetailSku\|)".*?"$':
+                  r'\1"SM-J701F_j7velte"',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdSmbiosSystemBoardModel\|)".*?"$':
+                  r'\1"SM-J701F"',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdFrameBufferWidth\|)\d+\s*$':
+                  r'\g<1>720',
+              r'(?m)^(\s*gSiliciumPkgTokenSpaceGuid\.PcdFrameBufferHeight\|)\d+\s*$':
+                  r'\g<1>1280',
           }
 
           for pattern, replacement in replacements.items():
@@ -91,7 +91,7 @@ jobs:
       - name: Collect firmware and build information
         run: |
           mkdir -p out
-          find Mu-Silicium -type f \\( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \\) -not -path '*/.git/*' -print -exec cp --parents {} out/ \;
+          find Mu-Silicium -type f \( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \) -not -path '*/.git/*' -print -exec cp --parents {} out/ \;
           cat > out/J7NEO-BUILD-INFO.txt <<'EOF'
           Target device: Samsung Galaxy J7 Neo
           Model: SM-J701F
@@ -103,7 +103,7 @@ jobs:
           Important: this is a J7 Neo display/identity-configured experimental build. The upstream gtaxllte platform package is still the hardware bring-up base. USB host, touchscreen, panel initialization, and OTG power are not confirmed by this workflow.
           EOF
           find out -type f -maxdepth 8 -print
-          test -n "$(find out -type f \\( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \\) -print -quit)"
+          test -n "$(find out -type f \( -name '*.img' -o -name '*.tar' -o -name '*.bin' -o -name '*.efi' \) -print -quit)"
 
       - name: Upload J7 Neo UEFI artifact
         uses: actions/upload-artifact@v4
