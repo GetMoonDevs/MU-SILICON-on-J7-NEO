@@ -1,69 +1,87 @@
 # Galaxy J7 Neo (SM-J701F) USB Host Porting
 
-## Confirmed target hardware
+## Target hardware
 
-Target: Samsung Galaxy J7 Neo, model SM-J701F, codename j7velte, Exynos 7870.
+- Device: Samsung Galaxy J7 Neo
+- Model: SM-J701F
+- Codename: j7velte
+- SoC: Exynos 7870
+- USB controller: Synopsys DesignWare USB 2.0 OTG, DWC2-compatible host core
+- USB speed: High Speed, 480 Mbps maximum
 
-The exact J7 Neo Linux device tree is available in:
-`Exynos7870/android_kernel_samsung_universal7870`, branch `lineage-16.0`.
+## Correct controller identification
 
-Relevant files:
-- `arch/arm64/boot/dts/exynos7870-j7velte_common.dtsi`
-- `arch/arm64/boot/dts/exynos7870.dtsi`
+The SoC DTS declares the wrapper at `0x13600000` with compatible `samsung,exynos7870-dwusb2`. Its child node is labelled `synopsys,dwc3`, but that child label alone does not identify the actual Exynos 7870 host-controller programming model.
 
-## Verified USB hardware configuration
+The matching Linux glue driver, `drivers/usb/dwc3/dwc3-exynos.c`, maps `samsung,exynos7870-dwusb2` to `dwc2_exynos7870`. It requests only the `usbdrd20` clock for this controller. This is the important distinction: J701F USB input must be brought up as an Exynos DWC2 host, not by blindly attaching the generic PCI xHCI driver.
 
-The J7velte board file enables the USB controller and configures its DWC3 child as follows:
+Verified register map from the J7 Neo device tree:
 
-- Controller node: `usb@13600000`
-- Controller register base: `0x13600000`
-- Register window: `0x10000`
-- DWC3 core compatible: `synopsys,dwc3`
-- USB maximum speed: `high-speed` (USB 2.0)
-- Linux role mode: `otg`
+- USB controller base: `0x13600000`
+- Controller window: `0x10000`
+- Controller IRQ: 230
+- PHY base: `0x135c0000`
+- PHY window: `0x100`
+- PHY compatible: `samsung,exynos7870-usbdrd-phy`
+- PHY clocks: `usbdrd20`, `phyumux`, `usb_pll`
+- Clock IDs in the kernel DTS: 335, 336, 350
+- PMU syscon base: `0x10480000`
+- PMU USB PHY control offset: `0x0704`
+- Exynos 7870 USB2 PHY enable bit: bit 1
 - Board property: `is_not_vbus_pad`
 
-The Exynos 7870 SoC device tree defines the DRD PHY:
+The board DTS marks the controller OTG and limits it to high-speed USB. The host driver must therefore use the USB 2.0 UTMI path. Do not enable SuperSpeed or assume that the PHY drives VBUS.
 
-- PHY base: `0x135c0000`
-- PHY register window: `0x100`
-- PHY compatible: `samsung,exynos7870-usbdrd-phy`
-- Clocks: `usbdrd20`, `phyumux`, `usb_pll`
-- Clock IDs in this kernel tree: 335, 336, 350
-- PMU syscon: `pmu_system_controller`
+## Verified Linux PHY sequence
 
-The DWC3 node uses IRQ 230 and references USB2 and USB3 PHY indices. The board limits the controller to high-speed USB, so the first target is USB 2.0 OTG host mode.
+The Exynos 7870 Linux PHY driver provides the device-specific sequence. It:
 
-## Existing Mu-Silicium limitation
+1. Enables the USB2 PHY through PMU register `0x10480704`, bit 1.
+2. Programs PHY clock/reset register `0x135c0010`, selecting PADREFCLK and the board reference clock.
+3. Enables UTMI suspend/common-on and pulses the PHY port reset.
+4. Applies the Exynos 7870 PLL tuning at PHY offset `0x70`.
+5. Releases SIDDQ and PHY reset at offset `0x54`.
+6. Sets forced BVALID/VBUSVALID because the board does not use the PHY VBUS pad.
+7. Configures UTMI VBUS-valid external selection and disables the OTG comparator.
+8. Applies the Exynos 7870 UTMI post-initialization tuning values.
 
-Mu-Silicium contains `SamsungPkg/Drivers/UsbfnDwc3Dxe`. This implements the USB Function protocol for device/gadget mode. It is not a USB Host Controller driver.
+The reference clock selection must match the real board clock. Do not hardcode a guessed frequency. The Linux driver resolves this from the clock provider and PHY configuration.
 
-The current Mu-Silicium source tree does not contain an obvious DWC3/xHCI host DXE driver. The pinned Mu_Basecore submodule does contain the generic EDK2 XhciDxe, UsbBusDxe, UsbKbDxe, and UsbMassStorageDxe modules. Mu_Plus contains UsbMouseHidDxe. However, XhciDxe lives under Bus/Pci and uses PCI services. The J7 Neo DWC3 is an SoC MMIO controller, not a PCI device, so it needs a platform adaptation or a dedicated host-controller DXE that publishes EFI_USB2_HC_PROTOCOL. The generic USB bus and class drivers can then sit above that protocol.
+The DWC2 glue driver also enables the `usbdrd20` clock. The remaining PHY clocks must be enabled through the Exynos clock provider or a verified equivalent. Their gate registers must not be guessed.
 
-## Required implementation
+## UEFI driver requirements
 
-1. Implement Exynos 7870 USB PHY and clock bring-up using the verified J7 Neo register map and board properties.
-2. Reset and initialize the DWC3 core, then select host port capability.
-3. Expose the DWC3 host-side xHCI register interface through UEFI's USB Host Controller protocol.
-4. Connect the UEFI USB bus driver, HID keyboard/mouse drivers, and USB mass-storage driver.
-5. Verify VBUS/OTG power behavior. The board's `is_not_vbus_pad` property means VBUS handling must not be guessed from a generic Exynos board.
-6. Test with a powered OTG hub, keyboard, mouse, and USB flash drive.
+The required UEFI host controller is a DWC2 host-controller driver that publishes `EFI_USB2_HC_PROTOCOL`. The existing EDK2 Raspberry Pi `DwUsbHostDxe` is a useful reference for the transfer engine and USB2 HC protocol, but its BCM2836 base address, Raspberry Pi firmware power protocol, and platform assumptions cannot be reused unchanged.
 
-## Status
+After the host controller publishes `EFI_USB2_HC_PROTOCOL`, connect:
 
-- [x] Confirm SM-J701F / j7velte / Exynos 7870.
-- [x] Read the exact J7velte board USB node.
-- [x] Verify DWC3 base, PHY base, IRQ, clock names, and high-speed OTG configuration.
-- [x] Confirm the existing Mu-Silicium DWC3 driver is device mode, not host mode.
-- [x] Locate the generic EDK2 USB stack in Mu_Basecore: XhciDxe, UsbBusDxe, UsbKbDxe, UsbMassStorageDxe. Mu_Plus also contains USB mouse HID support.\n- [ ] Adapt or implement a platform xHCI host-controller driver for the DWC3 MMIO controller. The generic XhciDxe is under Bus/Pci and expects PCI services, so it cannot be assumed to bind directly to this non-PCI SoC controller.
-- [ ] Implement Exynos 7870 PHY/clock/PMU initialization.
-- [ ] Integrate USB bus, HID, and mass-storage drivers.
-- [ ] Build and test on the physical J7 Neo.
+- `UsbBusDxe`
+- `UsbKbDxe`
+- USB mouse HID driver
+- `UsbMassStorageDxe`
 
-## References
+The generic PCI `XhciDxe` is not the correct driver for this Exynos DWC2 controller.
+
+## Work completed
+
+- [x] Confirmed SM-J701F / j7velte / Exynos 7870.
+- [x] Located the exact J7 Neo USB controller and PHY nodes.
+- [x] Verified controller and PHY MMIO bases.
+- [x] Read the Exynos Linux glue driver and confirmed the DWC2 host-controller path.
+- [x] Read the Exynos 7870 PHY initialization sequence and PMU enable bit.
+- [x] Identified that the generic PCI xHCI driver is the wrong controller driver.
+- [ ] Port a DWC2 host-controller DXE driver and remove Raspberry Pi platform dependencies.
+- [ ] Implement verified Exynos 7870 clock and PHY initialization in UEFI.
+- [ ] Integrate and start UEFI USB bus, keyboard, mouse, and mass-storage drivers.
+- [ ] Build and validate on the physical J701F with a powered OTG hub, keyboard, mouse, and flash drive.
+
+## Source references
 
 - J7 Neo board DTS: https://github.com/Exynos7870/android_kernel_samsung_universal7870/blob/lineage-16.0/arch/arm64/boot/dts/exynos7870-j7velte_common.dtsi
-- Exynos 7870 SoC DTS: https://github.com/Exynos7870/android_kernel_samsung_universal7870/blob/lineage-16.0/arch/arm64/boot/dts/exynos7870.dtsi
-- Mu-Silicium USB Function driver: https://github.com/Project-Silicium/Mu-Silicium/tree/main/Silicon/Samsung/SamsungPkg/Drivers/UsbfnDwc3Dxe
+- Exynos 7870 SoC DTS: https://github.com/Exynos7870/android_kernel_samsung_exynos7870/blob/lineage-16.0/arch/arm64/boot/dts/exynos7870.dtsi
+- Exynos USB glue driver: https://github.com/Exynos7870/android_kernel_samsung_exynos7870/blob/lineage-16.0/drivers/usb/dwc3/dwc3-exynos.c
+- Exynos 7870 PHY driver: https://github.com/torvalds/linux/blob/master/drivers/phy/samsung/phy-exynos5-usbdrd.c
+- Exynos 7870 PMU definitions: https://github.com/raspberrypi/linux/blob/master/include/linux/soc/samsung/exynos-regs-pmu.h
+- EDK2 DWC2 host-controller reference: https://github.com/tianocore/edk2-platforms/tree/master/Platform/RaspberryPi/Drivers/DwUsbHostDxe
 
-Do not flash an experimental image over the only working UEFI build. Keep the known-working image and test the new build as a separate artifact.
+Do not flash an experimental image over the only working UEFI build. Keep the known-working image and test a separate artifact.
